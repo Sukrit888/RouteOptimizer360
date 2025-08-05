@@ -1,7 +1,0 @@
-,Depot,Location 1,Location 2,Location 3,Location 4,Location 5
-Depot,0,24,81,70,30,92
-Location 1,24,0,84,97,33,12
-Location 2,81,84,0,97,39,47
-Location 3,70,97,97,0,42,85
-Location 4,30,33,39,42,0,51
-Location 5,92,12,47,85,51,0
