@@ -1,59 +1,82 @@
 import streamlit as st
 import pandas as pd
-import pydeck as pdk
-from generate_sample_data import generate_delivery_data, HUB_COORDS
-from route_optimizer import naive_route, nearest_neighbor_route, calculate_total_distance
+import numpy as np
+import matplotlib.pyplot as plt
+from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
-# Streamlit UI
-st.title("RouteOptimizer360 - Milestone 2")
-st.sidebar.header("Settings")
-num_points = st.sidebar.slider("Number of delivery points", 5, 50, 10)
-algorithm = st.sidebar.selectbox("Select Route Algorithm", ["Naive Route", "Nearest Neighbor"])
+st.set_page_config(layout="wide")
+st.title("🚛 RouteOptimizer360 – Real-Time Vehicle Routing Optimization")
 
-# Generate data
-df = generate_delivery_data(num_points)
-df_points = df.copy()
-df_points["type"] = "delivery"
-hub = pd.DataFrame([{"latitude": HUB_COORDS[0], "longitude": HUB_COORDS[1], "type": "hub"}])
-df_all = pd.concat([hub, df_points], ignore_index=True)
+# Sidebar input
+st.sidebar.header("Upload Your Data")
+uploaded_file = st.sidebar.file_uploader("Upload Distance Matrix (CSV)", type=["csv"])
+num_vehicles = st.sidebar.number_input("Number of Vehicles", min_value=1, max_value=10, value=3)
+depot_index = st.sidebar.number_input("Depot Index (starting point)", min_value=0, value=0)
 
-# Optimize route
-if algorithm == "Naive Route":
-    route = naive_route(df)
-elif algorithm == "Nearest Neighbor":
-    route = nearest_neighbor_route(HUB_COORDS, df)
+def solve_vehicle_routing(distance_matrix, num_vehicles, depot=0):
+    manager = pywrapcp.RoutingIndexManager(len(distance_matrix), num_vehicles, depot)
+    routing = pywrapcp.RoutingModel(manager)
 
-total_distance = calculate_total_distance(HUB_COORDS, route)
-st.sidebar.markdown(f"**Total Route Distance:** {total_distance:.2f} units")
+    def distance_callback(from_idx, to_idx):
+        return int(distance_matrix[manager.IndexToNode(from_idx)][manager.IndexToNode(to_idx)])
+    
+    transit_callback_index = routing.RegisterTransitCallback(distance_callback)
+    routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
 
-# Map display
-route_df = pd.DataFrame(route, columns=["latitude", "longitude"])
-layers = [
-    pdk.Layer(
-        "ScatterplotLayer",
-        data=df_all,
-        get_position="[longitude, latitude]",
-        get_color="[200, 30, 0, 160]",
-        get_radius=100,
-    ),
-    pdk.Layer(
-        "LineLayer",
-        data=route_df,
-        get_source_position="[-1] if index == 0 else [route_df.longitude[index-1], route_df.latitude[index-1]]",
-        get_target_position="[longitude, latitude]",
-        get_color=[0, 100, 255],
-        get_width=3,
-        pickable=True,
-        auto_highlight=True
-    )
-]
+    search_params = pywrapcp.DefaultRoutingSearchParameters()
+    search_params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
 
-st.pydeck_chart(pdk.Deck(
-    initial_view_state=pdk.ViewState(
-        latitude=HUB_COORDS[0],
-        longitude=HUB_COORDS[1],
-        zoom=12,
-        pitch=0,
-    ),
-    layers=layers,
-))
+    solution = routing.SolveWithParameters(search_params)
+
+    if not solution:
+        return None
+
+    routes = []
+    total_distance = 0
+    for vehicle_id in range(num_vehicles):
+        index = routing.Start(vehicle_id)
+        route = []
+        route_distance = 0
+        while not routing.IsEnd(index):
+            node_index = manager.IndexToNode(index)
+            route.append(node_index)
+            previous_index = index
+            index = solution.Value(routing.NextVar(index))
+            route_distance += routing.GetArcCostForVehicle(previous_index, index, vehicle_id)
+        route.append(manager.IndexToNode(index))  # Add depot/end
+        routes.append((route, route_distance))
+        total_distance += route_distance
+
+    return routes, total_distance
+
+def plot_routes(routes):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for idx, (route, dist) in enumerate(routes):
+        y = [idx] * len(route)
+        ax.plot(route, y, marker='o', label=f'Vehicle {idx+1} | Distance: {dist}')
+    ax.set_xlabel("Node Index")
+    ax.set_ylabel("Vehicle")
+    ax.set_title("Optimized Routes per Vehicle")
+    ax.legend()
+    st.pyplot(fig)
+
+if uploaded_file is not None:
+    try:
+        df = pd.read_csv(uploaded_file, header=None)
+        distance_matrix = df.values.tolist()
+        st.success("✅ Distance matrix uploaded successfully!")
+        if st.sidebar.button("Run Optimization"):
+            result = solve_vehicle_routing(distance_matrix, num_vehicles, depot_index)
+            if result is None:
+                st.error("❌ No solution found. Try reducing the number of vehicles or fixing your data.")
+            else:
+                routes, total_distance = result
+                st.subheader("📍 Optimized Routes")
+                for i, (route, dist) in enumerate(routes):
+                    st.markdown(f"**Vehicle {i+1}:** {' → '.join(map(str, route))} (Distance: {dist})")
+                st.markdown(f"### 🧮 Total Distance: {total_distance}")
+                plot_routes(routes)
+    except Exception as e:
+        st.error(f"Error reading the distance matrix: {e}")
+else:
+    st.info("📤 Please upload a CSV file containing the distance matrix.")
