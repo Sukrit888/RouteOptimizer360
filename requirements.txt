@@ -1,8 +1,8 @@
 streamlit
 pandas
-geopy
-folium
 numpy
-scikit-learn
-networkx
 matplotlib
+geopy
+plotly
+scikit-learn
+ortools
