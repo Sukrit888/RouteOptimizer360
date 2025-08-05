@@ -1,3 +1,8 @@
 streamlit
 pandas
-pydeck
+geopy
+folium
+numpy
+scikit-learn
+networkx
+matplotlib
